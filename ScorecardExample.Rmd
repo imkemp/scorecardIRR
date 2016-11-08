@@ -1,0 +1,161 @@
+---
+title: "Scorecard Example"
+author: "Iris Kemp"
+date: "November 7, 2016"
+output: 
+    html_document:
+        keep_md: TRUE
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Scorecard
+
+Given a scorecard where 5 raters were asked to assign ordinal ratings to 12 items, we want to evaluate inter-rater reliability. Simply, we want to determine how much consensus there is among raters. And, we want to use the R package `irr` to do this.
+
+First, let's load the libraries we will use. 
+```{r libraries, echo = TRUE, message = FALSE}
+library(ggplot2)
+library(reshape2)
+library(corrplot)
+library(irr)
+```
+
+Next, we create a scorecard:
+
+```{r scorecard, echo=FALSE}
+scorecard <- data.frame(item = c("item1", "item2", "item3", "item4", "item5", "item6", 
+                                 "item7", "item8", "item9", "item10", "item11", "item12"), 
+                        R1 = c(4, 3, 1, 5, 6, 9, 8, 2, 7, 11, 10, 12), 
+                        R2 = c(1, 2, 6, 3, 5, 4, 8, 9, 10, 11, 6, 12), 
+                        R3 = c(1, 2, 6, 3, 4, 5, 8, 7, 10, 9, 11, 12), 
+                        R4 = c(2, 3, 5, 6, 7, 1, 4, 10, 8, 9, 11, 12), 
+                        R5 = c(1, 6, 2, 5, 3, 8, 4, 9, 7, 10, 11, 12))
+print(scorecard, row.names = FALSE)
+```
+
+Here's what these data look like:
+
+```{r scorecardplot, echo=FALSE}
+scoremelt <- melt(scorecard, id = c("item"))
+
+scoremelt$item <- factor(scoremelt$item, levels = c("item1", "item2", "item3", "item4", "item5", "item6", 
+                                 "item7", "item8", "item9", "item10", "item11", "item12"))
+
+ggplot(scoremelt, aes(x = item, y = value)) + 
+  geom_point(size = 4, alpha = 0.2) + 
+  theme_bw() + 
+  scale_y_discrete(limits = 1:12, name = "Rating", expand = c(0.05, 0.05))
+
+```
+
+The darker the point, the more raters agreed on it's rating. On this scorecard, all raters agreed on the rating for item 12; all raters disagreed on the rating for items 5 and 6.
+
+## Inter-rater reliability
+
+There are several statistical measures appropriate for assessing inter-rater reliability. Let's pick a few from package `irr` to test. These ratings are ordinal, and we have more than two raters, so let's start by looking at pairwise correlation among raters, using Kendall's W, Spearman's rho, and Pearson's r. In this case the rating scale is continuous, so Pearson's is probably the best choice, but let's try them all.
+
+### Kendall's W
+
+The function `kendall` computes Kendall's coefficient of concordance. We'll set `correct = TRUE` to correct for ties within raters.
+
+```{r kendall, echo=TRUE}
+kendall(scorecard[,2:6], correct = TRUE)
+```
+
+This tells us that Kendall's W is approximately 0.7. Kendall's W ranges from 0 (no agreement) to 1 (complete agreement). Raters generally agreed with each other. 
+
+### Spearman's rho
+
+The function `meanrho` computes the mean of Spearman's rho rank correlations between pairs of raters. This measure is not a very good metric for this dataset, due to the presence of ties among raters.
+
+Here is a visualization of the Spearman's rho correlation matrix:
+```{r spearman, echo=FALSE}
+smat <- cor(scorecard[,2:6], method = "spearman")
+
+corrplot.mixed(smat)
+```
+
+You can see that raters 2 and 3 had highest agreement with each other (correlation of 0.89). 
+
+```{r meanrho, echo=TRUE}
+meanrho(scorecard[,2:6])
+```
+
+Note that we can also calculate the mean of the correlation matrix in base R with `mean(corrmatrix[lower.tri(corrmatrix)])`.
+
+### Pearson's r
+
+The function `meancor` computes the mean of Pearson's product moment correlations between pairs of raters.
+
+Here's a visualization of the correlation matrix: 
+```{r pearson, echo=FALSE}
+pmat <- cor(scorecard[,2:6], method = "pearson")
+corrplot.mixed(pmat)
+```
+
+Notice how similar the correlation matrices we have calculated through these two different methods are - almost identical. Pearson's r is computed based on the true values of the variables in question (thus reflecting a linear relationship), while Spearman's rho is computed on ranks (thus reflecting a monotonic relationship). So in this case, they both produce similar results.
+
+```{r meancor, echo=TRUE}
+meancor(scorecard[,2:6])
+```
+
+And as we might expect, the mean is also very similar. 
+
+### ICC
+
+We could also compute the intraclass correlation coefficient (which I am less familiar with, but it's convenient to do with package `irr`). Here data are centered and scaled using a pooled mean and standard deviation.
+
+We'll choose a `oneway` model and compute raters' `agreement`. The `icc` function call doesn't allow me to specify which ICC estimate I want to use (maybe try package `ICC`?), but has ICC(1) in the output. Probably someone who is familiar with this correlation knows what that means.
+
+```{r icc, echo=TRUE}
+icc(scorecard[,2:6], model = "oneway", type = "agreement")
+```
+
+The internet tells me that an inter-rater agreement measure of 0.7 falls in the "good" agreement category. Since I'm not familiar with the math behind this coefficient and can't be bothered to look it up at the moment, I suppose we'll move forward. Note: this is not a recommended method of statistical analysis. 
+
+## Some random bootstrapping stuff
+
+Say we're curious about whether one rater has an undue effect on overall rater agreement. One very simple way to test this would be to remove each rater from the sample and see what impact that has on the results. Using Pearson's r, let's try it. 
+
+```{r meancorboot, echo=FALSE}
+all <- meancor(scorecard[,2:6])
+minus1 <- meancor(scorecard[,3:6])
+minus2 <- meancor(scorecard[,c(2,4:6)])
+minus3 <- meancor(scorecard[,c(2:3,5:6)])
+minus4 <- meancor(scorecard[,c(2:4,6)])
+minus5 <- meancor(scorecard[,2:5])
+
+bootresults <- data.frame(test = c("include all raters", 
+                                   "remove Rater 1", 
+                                   "remove Rater 2", 
+                                   "remove Rater 3", 
+                                   "remove Rater 4", 
+                                   "remove Rater 5"), 
+                          mean = c(round(all$value, digits = 2), 
+                                   round(minus1$value, digits = 2), 
+                                   round(minus2$value, digits = 2), 
+                                   round(minus3$value, digits = 2), 
+                                   round(minus4$value, digits = 2), 
+                                   round(minus5$value, digits = 2)))
+
+for (it in 1:6) {
+bootresults$diff.from.mean[it] <- bootresults$mean[it] - bootresults$mean[1]  
+}
+
+```
+
+The table of results is: 
+```{r bootresults, echo=TRUE}
+print(bootresults, row.names = FALSE)
+```
+
+## Conclusions
+
+Inter-rater reliability was good, as shown by a variety of metrics (some more appropriate to this particular sample dataset than others). Generally raters agreed with each other. 
+
+Rater 1 disagreed most with other raters. We can visually see this from the plot, and we can see that the agreement index based on Pearson's r improved by the largest margin when Rater 1 was removed from the dataset. Raters 2 & 3 were most similar to each other, and removing Rater 3 from the dataset produced the lowest agreement index of any scenario. However, as we did not do any significance testing in this example, we cannot determine whether any given rater was significantly different from the other raters.
+
+Although not addressed directy in this example, the variability of ratings among items is also interesting and could be explored further. Some items had low variability, as seen in cases where the spread of points in the plot is small (or 0, as in the case of item 12). Other items had higher variability. Items 3, 6, 8, and 11 all had spreads of 5 or more between the lowest and highest ratings. Items 5 and 6 were universally disagreed upon. 
